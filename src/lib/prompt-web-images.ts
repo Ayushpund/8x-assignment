@@ -24,7 +24,7 @@ export function isPlaceholderSvgDataUrl(dataUrl: string): boolean {
 function tokenize(text: string): string[] {
   return text
     .toLowerCase()
-    .replace(/[^\p{L}\p{N}\s-]/gu, " ")
+    .replace(/[^a-z0-9\s-]/g, " ")
     .split(/\s+/)
     .filter((w) => w.length > 2 && !STOP_WORDS.has(w));
 }
@@ -35,7 +35,7 @@ export function buildPromptSearchQuery(options: {
   studioMode: StudioMode;
 }): string {
   const base = options.prompt
-    .replace(/\s*—\s*.+$/u, "")
+    .replace(/\s*—\s*.+$/, "")
     .replace(/,\s*[\w\s-]+(?:style|lighting|preset)/gi, "")
     .trim();
 
