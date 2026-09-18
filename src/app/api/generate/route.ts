@@ -35,8 +35,10 @@ import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 import type { StudioMode } from "@/lib/studio-config";
 
 import { parseStudioMode } from "@/lib/studio-config";
-
-
+import {
+  allowGeminiImageGeneration,
+  isWebPrimaryStudioMode,
+} from "@/lib/generation-mode";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -107,14 +109,20 @@ export async function POST(request: Request) {
 
   const modelOption = getModelOption(modelId);
 
-  const userKeyFromClient = body.apiKey ?? body.geminiApiKey;
+  const studioModeEarly: StudioMode = parseStudioMode(body.studioMode);
+  const webPrimary =
+    isWebPrimaryStudioMode(studioModeEarly) && !allowGeminiImageGeneration();
+
+  const userKeyFromClient = webPrimary
+    ? undefined
+    : body.apiKey ?? body.geminiApiKey;
 
   const creds = resolveGenerationCredentials({
     modelId,
     userKey: userKeyFromClient,
   });
 
-  if (creds.userKeyRejected) {
+  if (creds.userKeyRejected && !webPrimary) {
     return NextResponse.json(
       {
         images: [],
@@ -125,7 +133,7 @@ export async function POST(request: Request) {
     );
   }
 
-  if (creds.source === "server") {
+  if (creds.source === "server" && !webPrimary) {
 
     const ip = getClientIp(request);
 
@@ -211,7 +219,41 @@ export async function POST(request: Request) {
     pro
   );
 
+  async function respondWebImages(primary: boolean): Promise<NextResponse | null> {
+    if (studioMode === "video") return null;
+    const web = await fetchPromptImagesFromWeb(webImageOptions());
+    if (web.images.length === 0) return null;
+    return NextResponse.json({
+      images: web.images,
+      modelId: "web-prompt-search",
+      model: "open-web",
+      webFallback: true,
+      webPrimary: primary,
+      notice:
+        web.notice ||
+        "Prompt-matched images from Openverse, Wikimedia & DuckDuckGo (no Gemini API).",
+    });
+  }
 
+  if (webPrimary) {
+    const webRes = await respondWebImages(true);
+    if (webRes) return webRes;
+
+    const images = await mockGenerateImagesServer({
+      count,
+      aspectRatio,
+      prompt: displayPrompt,
+      studioMode,
+    });
+
+    return NextResponse.json({
+      images,
+      demoMode: true,
+      webPrimary: true,
+      notice:
+        "No web matches for this prompt — try simpler keywords (e.g. “sunset mountains”, “portrait studio”).",
+    });
+  }
 
   if (studioMode === "video" && creds.source !== "user") {
     return NextResponse.json(
@@ -267,17 +309,7 @@ export async function POST(request: Request) {
   }
 
   async function tryWebPromptFallback(): Promise<NextResponse | null> {
-    if (studioMode === "video") return null;
-    const web = await fetchPromptImagesFromWeb(webImageOptions());
-    if (web.images.length === 0) return null;
-    return NextResponse.json({
-      images: web.images,
-      modelId: "web-prompt-search",
-      model: "open-web",
-      usedOwnKey: creds.source === "user",
-      webFallback: true,
-      notice: web.notice,
-    });
+    return respondWebImages(false);
   }
 
   try {
@@ -337,10 +369,16 @@ export async function POST(request: Request) {
     }
 
     const status = isRateOrQuotaError(err) ? 429 : 502;
+    const geminiMsg = translateProviderError(err, creds.vendor);
+    const hideGeminiKeyNoise =
+      (studioMode === "image" || studioMode === "audio") &&
+      geminiMsg.toLowerCase().includes("leaked");
     return NextResponse.json(
       {
         images: [],
-        error: translateProviderError(err, creds.vendor),
+        error: hideGeminiKeyNoise
+          ? "No prompt-matched web images found. Try different keywords — image mode uses web search, not Gemini, unless ALLOW_GEMINI_IMAGE=1 in .env.local."
+          : geminiMsg,
         needsOwnKey: creds.source === "server" && isRateOrQuotaError(err),
       },
       { status }
