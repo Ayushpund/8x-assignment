@@ -1,0 +1,1 @@
+export { SupercomputerHero as SupercomputerCta } from "@/components/landing/supercomputer-hero";

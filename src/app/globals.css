@@ -1,0 +1,69 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 10 10 10;
+    --foreground: 255 255 255;
+    --surface: 26 26 26;
+    --surface-input: 31 31 31;
+    --surface-hover: 37 37 37;
+    --brand: 212 255 0;
+    --brand-foreground: 10 10 10;
+    --accent-pink: 255 46 126;
+    --muted: 142 142 142;
+    --muted-foreground: 161 161 161;
+    --border: 42 42 42;
+    --border-subtle: 31 31 31;
+    --nav-h: 3.5rem;
+    --promo-h: 2.5rem;
+    --header-offset: calc(var(--nav-h) + var(--promo-h));
+  }
+
+  html {
+    @apply antialiased;
+    color-scheme: dark;
+    overflow-x: hidden;
+  }
+
+  body {
+    @apply min-h-screen overflow-x-hidden bg-background font-sans text-foreground;
+    font-size: 0.9375rem;
+    line-height: 1.5;
+  }
+
+  :focus-visible {
+    @apply outline-none ring-2 ring-brand ring-offset-2 ring-offset-background;
+  }
+
+  img,
+  video {
+    @apply max-w-full;
+  }
+}
+
+/* Keep utilities outside @layer so they are never dropped */
+.nav-scroll {
+  overflow-x: auto;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.nav-scroll::-webkit-scrollbar {
+  display: none;
+}
+
+.scrollbar-thin {
+  scrollbar-width: thin;
+  scrollbar-color: rgb(var(--border)) transparent;
+}
+
+.scrollbar-thin::-webkit-scrollbar {
+  height: 6px;
+}
+
+.scrollbar-thin::-webkit-scrollbar-thumb {
+  border-radius: 9999px;
+  background: rgb(var(--border));
+}

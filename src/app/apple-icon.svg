@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 180 180" fill="none">
+  <rect width="180" height="180" rx="40" fill="#0a0a0a"/>
+  <rect x="4" y="4" width="172" height="172" rx="36" stroke="#d4ff00" stroke-opacity="0.35" stroke-width="3"/>
+  <path
+    d="M90 28c-21.5 0-38.2 15.2-38.2 40.5 0 13.5 6.8 24.8 16.8 31.5-13.5 5.6-23.2 18.5-23.2 33.8 0 20.2 16.5 36.5 36.5 36.5s36.5-16.3 36.5-36.5c0-15.3-9.7-28.2-23.2-33.8 10-6.7 16.8-18 16.8-31.5C128.2 43.2 111.5 28 90 28Z"
+    stroke="#d4ff00"
+    stroke-width="11"
+    stroke-linecap="round"
+  />
+  <path
+    d="M70 78c8.5-5.5 19.5-5.5 28 0M70 102c8.5 5.5 19.5 5.5 28 0"
+    stroke="#d4ff00"
+    stroke-width="9"
+    stroke-linecap="round"
+  />
+</svg>
