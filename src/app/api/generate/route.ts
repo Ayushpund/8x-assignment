@@ -33,7 +33,7 @@ import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 import type { StudioMode } from "@/lib/studio-config";
 
 import { parseStudioMode } from "@/lib/studio-config";
-import { useWebSearchForGeneration } from "@/lib/generation-mode";
+import { shouldUseWebSearchForGeneration } from "@/lib/generation-mode";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -113,7 +113,10 @@ export async function POST(request: Request) {
     userKey: userKeyFromClient,
   });
 
-  const webHosted = useWebSearchForGeneration(studioModeEarly, creds.source);
+  const webHosted = shouldUseWebSearchForGeneration(
+    studioModeEarly,
+    creds.source
+  );
 
   if (creds.userKeyRejected && !webHosted) {
     return NextResponse.json(

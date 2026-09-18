@@ -19,7 +19,7 @@ export function SubscriptionSync() {
         proSince: plan.plan === "pro" ? plan.proSince : null,
       });
     });
-  }, [authReady, user?.id, patchUser]);
+  }, [authReady, user, patchUser]);
 
   return null;
 }

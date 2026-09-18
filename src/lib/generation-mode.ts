@@ -10,7 +10,7 @@ export function isWebPrimaryStudioMode(mode: StudioMode): boolean {
 }
 
 /** Web search for image/audio when the user is not on their own API key. */
-export function useWebSearchForGeneration(
+export function shouldUseWebSearchForGeneration(
   mode: StudioMode,
   keySource: "user" | "server" | "none"
 ): boolean {
