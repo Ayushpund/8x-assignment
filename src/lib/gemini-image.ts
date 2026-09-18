@@ -58,6 +58,12 @@ export function translateGeminiError(err: unknown): string {
   ) {
     return "This prompt was flagged by content safety — try rephrasing";
   }
+  if (lower.includes("reported as leaked") || lower.includes("leaked")) {
+    return (
+      "This Gemini API key was disabled because it was exposed publicly. " +
+      "Create a new key at Google AI Studio, put it only in .env.local or Create → Your AI API key, and never commit or paste it in chat."
+    );
+  }
   if (lower.includes("api key not valid") || lower.includes("invalid api key")) {
     return "Invalid Gemini API key — check the key from Google AI Studio";
   }
@@ -161,7 +167,9 @@ function isInvalidApiKeyError(err: unknown): boolean {
     lower.includes("api key not valid") ||
     lower.includes("invalid api key") ||
     lower.includes("permission denied") ||
-    lower.includes("api key expired")
+    lower.includes("api key expired") ||
+    lower.includes("reported as leaked") ||
+    lower.includes("leaked")
   );
 }
 

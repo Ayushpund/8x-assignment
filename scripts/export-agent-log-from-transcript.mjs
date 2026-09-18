@@ -20,9 +20,11 @@ const transcriptPath =
 
 function redactSecrets(text) {
   return text
+    .replace(/AIza[A-Za-z0-9_-]{20,}/g, "[REDACTED-GOOGLE-API-KEY]")
     .replace(/github_pat_[A-Za-z0-9_]+/g, "[REDACTED-GITHUB-TOKEN]")
     .replace(/\bghp_[A-Za-z0-9]+\b/g, "[REDACTED-GITHUB-TOKEN]")
     .replace(/\bcfsk_ma_test_[A-Za-z0-9_]+\b/g, "[REDACTED-CASHFREE-SECRET]")
+    .replace(/\bcfsk_[A-Za-z0-9_]+\b/g, "[REDACTED-CASHFREE-SECRET]")
     .replace(/\bTEST[0-9a-f]{32,}\b/gi, "[REDACTED-CASHFREE-APP-ID]")
     .replace(/pass is \S+/gi, "pass is [REDACTED-PASSWORD]");
 }
