@@ -33,27 +33,45 @@ export function buildPromptSearchQuery(options: {
   prompt: string;
   styleTags?: string[];
   studioMode: StudioMode;
+  includeStyles?: boolean;
 }): string {
   const base = options.prompt
     .replace(/\s*—\s*.+$/, "")
     .replace(/,\s*[\w\s-]+(?:style|lighting|preset)/gi, "")
     .trim();
 
-  const styleHint = (options.styleTags ?? []).slice(0, 2).join(" ");
-  let q = [base, styleHint].filter(Boolean).join(" ").trim();
+  let q = base;
+  if (options.includeStyles !== false) {
+    const styleHint = (options.styleTags ?? []).slice(0, 1).join(" ");
+    q = [base, styleHint].filter(Boolean).join(" ").trim();
+  }
   if (!q) q = options.prompt.trim();
 
   if (options.studioMode === "audio") q = `${q} album cover artwork`;
   return q.slice(0, 140);
 }
 
-function searchVariants(query: string): string[] {
+function searchVariants(query: string, aggressive: boolean): string[] {
   const variants = [query];
   const lower = query.toLowerCase();
-  if (lower.includes("ramayan") && !lower.includes("ramayana")) {
+  const words = tokenize(query);
+
+  if (lower.includes("ramayan")) {
     variants.push(query.replace(/ramayan/gi, "Ramayana"));
+    variants.push("Ramayana battle art");
+    variants.push("Ramayana war illustration");
   }
-  return Array.from(new Set(variants));
+  if (words.length >= 2) {
+    variants.push(words.slice(0, 3).join(" "));
+    variants.push(`${words.slice(0, 2).join(" ")} photo`);
+    variants.push(`${words.slice(0, 2).join(" ")} image`);
+  }
+  if (aggressive && words.length > 0) {
+    variants.push(words[0]!);
+    variants.push(`${words[0]} wallpaper`);
+  }
+
+  return Array.from(new Set(variants.map((v) => v.trim()).filter(Boolean)));
 }
 
 function relevanceScore(hit: ImageHit, tokens: string[]): number {
@@ -212,18 +230,17 @@ async function getDuckDuckGoVqd(query: string): Promise<string | null> {
   return match?.[1] ?? null;
 }
 
-async function searchDuckDuckGoImages(
+async function ddgImageRequest(
   query: string,
+  vqd: string,
+  page: number,
   limit: number,
-  page: number
+  quoted: boolean
 ): Promise<ImageHit[]> {
-  const vqd = await getDuckDuckGoVqd(query);
-  if (!vqd) return [];
-
   const params = new URLSearchParams({
     l: "us-en",
     o: "json",
-    q: `"${query}"`,
+    q: quoted ? `"${query}"` : query,
     vqd,
     f: ",,,",
     p: String(Math.max(1, page)),
@@ -255,22 +272,83 @@ async function searchDuckDuckGoImages(
   return hits;
 }
 
+async function searchDuckDuckGoImages(
+  query: string,
+  limit: number,
+  page: number
+): Promise<ImageHit[]> {
+  const vqd = await getDuckDuckGoVqd(query);
+  if (!vqd) return [];
+  const strict = await ddgImageRequest(query, vqd, page, limit, true);
+  if (strict.length > 0) return strict;
+  return ddgImageRequest(query, vqd, page, limit, false);
+}
+
+async function searchGoogleImagesHtml(
+  query: string,
+  limit: number
+): Promise<ImageHit[]> {
+  const url = `https://www.google.com/search?q=${encodeURIComponent(query + " image")}&tbm=isch&hl=en`;
+  const res = await fetch(url, {
+    headers: {
+      "User-Agent": UA,
+      Accept: "text/html",
+      "Accept-Language": "en-US,en;q=0.9",
+    },
+    signal: AbortSignal.timeout(FETCH_MS),
+  });
+  if (!res.ok) return [];
+  const html = await res.text();
+  const hits: ImageHit[] = [];
+  const seen = new Set<string>();
+
+  const patterns = [
+    /"ou":"(https:\\\/\\\/[^"\\]+)"/g,
+    /\["(https:\/\/[^"]+\.(?:jpg|jpeg|png|webp)[^"]*)"/gi,
+    /(https:\/\/[^"\s]+\.(?:jpg|jpeg|png|webp)(?:\?[^"\s]*)?)/gi,
+  ];
+
+  for (const re of patterns) {
+    for (const m of html.matchAll(re)) {
+      let raw = m[1] ?? m[0];
+      if (!raw) continue;
+      raw = raw.replace(/\\u003d/g, "=").replace(/\\\//g, "/");
+      if (!/^https?:\/\//i.test(raw)) continue;
+      const key = raw.split("?")[0]!.toLowerCase();
+      if (seen.has(key)) continue;
+      if (raw.includes("gstatic.com") && raw.includes("images?q=tbn")) continue;
+      seen.add(key);
+      hits.push({
+        url: raw,
+        title: query,
+        source: "Google Images",
+        referer: "https://www.google.com/",
+      });
+      if (hits.length >= limit * 4) break;
+    }
+    if (hits.length >= limit * 4) break;
+  }
+  return hits;
+}
+
 async function collectHits(
   query: string,
   count: number,
   page: number,
-  tokens: string[]
+  tokens: string[],
+  aggressive: boolean
 ): Promise<ImageHit[]> {
-  for (const variant of searchVariants(query)) {
-    const [openverse, wiki, ddg] = await Promise.all([
+  for (const variant of searchVariants(query, aggressive)) {
+    const [openverse, wiki, ddg, google] = await Promise.all([
       searchOpenverse(variant, count, page),
       searchWikimediaCommons(variant, count),
       searchDuckDuckGoImages(variant, count, page),
+      aggressive ? searchGoogleImagesHtml(variant, count) : Promise.resolve([]),
     ]);
 
     const seen = new Set<string>();
     const merged: ImageHit[] = [];
-    for (const hit of [...wiki, ...openverse, ...ddg]) {
+    for (const hit of [...google, ...wiki, ...openverse, ...ddg]) {
       const key = hit.url.split("?")[0]!.toLowerCase();
       if (seen.has(key)) continue;
       seen.add(key);
@@ -279,12 +357,21 @@ async function collectHits(
     }
 
     merged.sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
-    const minScore = tokens.length >= 2 ? 3 : 0;
-    const filtered = merged.filter((h) => (h.score ?? 0) >= minScore);
-    if (filtered.length > 0) return filtered;
     if (merged.length > 0) return merged;
   }
   return [];
+}
+
+async function hitToStudioImage(hit: ImageHit): Promise<string | null> {
+  let dataUrl = await urlToDataUrl(hit.url, hit.referer);
+  if (!dataUrl && hit.fallbackUrl) {
+    dataUrl = await urlToDataUrl(hit.fallbackUrl, hit.referer);
+  }
+  if (dataUrl) return dataUrl;
+  if (/^https?:\/\//i.test(hit.url)) {
+    return `/api/image-proxy?url=${encodeURIComponent(hit.url)}`;
+  }
+  return null;
 }
 
 export async function fetchPromptImagesFromWeb(options: {
@@ -294,32 +381,46 @@ export async function fetchPromptImagesFromWeb(options: {
   aspectRatio: AspectRatioId;
   studioMode: StudioMode;
   searchPage?: number;
+  aggressive?: boolean;
 }): Promise<WebPromptImageResult> {
   void options.aspectRatio;
-  const query = buildPromptSearchQuery({
+  const baseQuery = buildPromptSearchQuery({
     prompt: options.prompt,
     styleTags: options.styleTags,
     studioMode: options.studioMode,
+    includeStyles: false,
   });
-  if (!query) {
+  if (!baseQuery) {
     return { images: [], notice: "", sources: [] };
   }
 
-  const tokens = tokenize(query);
-  const page = Math.max(1, (options.searchPage ?? 0) % 5 + 1);
-  const candidates = await collectHits(query, options.count, page, tokens);
+  const tokens = tokenize(baseQuery);
+  const page = Math.max(1, Number(options.searchPage) || 1);
+  let candidates = await collectHits(
+    baseQuery,
+    options.count,
+    page,
+    tokens,
+    Boolean(options.aggressive)
+  );
+  if (candidates.length === 0) {
+    candidates = await collectHits(
+      baseQuery,
+      options.count,
+      page + 1,
+      tokens,
+      true
+    );
+  }
 
   const images: string[] = [];
   const sources: string[] = [];
 
   for (const hit of candidates) {
     if (images.length >= options.count) break;
-    let dataUrl = await urlToDataUrl(hit.url, hit.referer);
-    if (!dataUrl && hit.fallbackUrl) {
-      dataUrl = await urlToDataUrl(hit.fallbackUrl, hit.referer);
-    }
-    if (!dataUrl) continue;
-    images.push(dataUrl);
+    const src = await hitToStudioImage(hit);
+    if (!src) continue;
+    images.push(src);
     sources.push(hit.source);
   }
 
@@ -334,7 +435,6 @@ export async function fetchPromptImagesFromWeb(options: {
     images: images.slice(0, options.count),
     sources: sources.slice(0, options.count),
     notice:
-      `Prompt web match for “${query}” (page ${page}) — ${images.length} ${modeLabel}(s). ` +
-      "Download enabled · results filtered to your prompt keywords.",
+      `Web search for “${baseQuery}” — ${images.length} ${modeLabel}(s) from ${sources.join(", ")}. Download enabled.`,
   };
 }

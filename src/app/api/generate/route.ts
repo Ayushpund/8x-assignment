@@ -20,8 +20,6 @@ import {
 } from "@/lib/generate-orchestrator";
 import { VideoRequiresOwnKeyError } from "@/lib/gemini-image";
 
-import { mockGenerateImagesServer } from "@/lib/mock-generate-server";
-
 import { enhancePromptForStudio } from "@/lib/prompt-engine";
 import {
   fetchPromptImagesFromWeb,
@@ -35,10 +33,7 @@ import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 import type { StudioMode } from "@/lib/studio-config";
 
 import { parseStudioMode } from "@/lib/studio-config";
-import {
-  allowGeminiImageGeneration,
-  isWebPrimaryStudioMode,
-} from "@/lib/generation-mode";
+import { useWebSearchForGeneration } from "@/lib/generation-mode";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -110,19 +105,17 @@ export async function POST(request: Request) {
   const modelOption = getModelOption(modelId);
 
   const studioModeEarly: StudioMode = parseStudioMode(body.studioMode);
-  const webPrimary =
-    isWebPrimaryStudioMode(studioModeEarly) && !allowGeminiImageGeneration();
 
-  const userKeyFromClient = webPrimary
-    ? undefined
-    : body.apiKey ?? body.geminiApiKey;
+  const userKeyFromClient = body.apiKey ?? body.geminiApiKey;
 
   const creds = resolveGenerationCredentials({
     modelId,
     userKey: userKeyFromClient,
   });
 
-  if (creds.userKeyRejected && !webPrimary) {
+  const webHosted = useWebSearchForGeneration(studioModeEarly, creds.source);
+
+  if (creds.userKeyRejected && !webHosted) {
     return NextResponse.json(
       {
         images: [],
@@ -133,7 +126,7 @@ export async function POST(request: Request) {
     );
   }
 
-  if (creds.source === "server" && !webPrimary) {
+  if (creds.source === "server" && !webHosted) {
 
     const ip = getClientIp(request);
 
@@ -235,24 +228,37 @@ export async function POST(request: Request) {
     });
   }
 
-  if (webPrimary) {
-    const webRes = await respondWebImages(true);
-    if (webRes) return webRes;
-
-    const images = await mockGenerateImagesServer({
-      count,
-      aspectRatio,
-      prompt: displayPrompt,
-      studioMode,
+  if (webHosted) {
+    let web = await fetchPromptImagesFromWeb({
+      ...webImageOptions(),
+      aggressive: false,
     });
-
-    return NextResponse.json({
-      images,
-      demoMode: true,
-      webPrimary: true,
-      notice:
-        "No web matches for this prompt — try simpler keywords (e.g. “sunset mountains”, “portrait studio”).",
-    });
+    if (web.images.length === 0) {
+      web = await fetchPromptImagesFromWeb({
+        ...webImageOptions(),
+        searchPage: webSearchPage + 1,
+        aggressive: true,
+      });
+    }
+    if (web.images.length > 0) {
+      return NextResponse.json({
+        images: web.images,
+        modelId: "web-prompt-search",
+        model: "open-web",
+        webFallback: true,
+        webPrimary: true,
+        notice: web.notice,
+      });
+    }
+    return NextResponse.json(
+      {
+        images: [],
+        error:
+          "No prompt-matched images found on the web. Try “Ramayana battle”, “sunset mountains”, or shorter keywords.",
+        webPrimary: true,
+      },
+      { status: 502 }
+    );
   }
 
   if (studioMode === "video" && creds.source !== "user") {
@@ -282,30 +288,27 @@ export async function POST(request: Request) {
       );
     }
 
-    const web = await fetchPromptImagesFromWeb(webImageOptions());
+    let web = await fetchPromptImagesFromWeb({
+      ...webImageOptions(),
+      aggressive: true,
+    });
     if (web.images.length > 0) {
       return NextResponse.json({
         images: web.images,
-        demoMode: true,
         webFallback: true,
         notice: web.notice,
       });
     }
 
-    const images = await mockGenerateImagesServer({
-      count,
-      aspectRatio,
-      prompt: displayPrompt,
-      studioMode,
-    });
-
-    return NextResponse.json({
-      images,
-      demoMode: true,
-      needsOwnKey: true,
-      notice:
-        "No web matches for this prompt — add your Gemini API key for AI-generated image/audio.",
-    });
+    return NextResponse.json(
+      {
+        images: [],
+        error:
+          "No web images found for this prompt. Add your own API key in Create for AI generation, or try simpler search words.",
+        needsOwnKey: true,
+      },
+      { status: 502 }
+    );
   }
 
   async function tryWebPromptFallback(): Promise<NextResponse | null> {
